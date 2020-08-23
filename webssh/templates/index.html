@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>webssh</title>
+    <link href="{{ static_url('css/bootstrap.min.css') }}" rel="stylesheet" type="text/css"/>
+    <link href="{{ static_url('css/xterm.css') }}" rel="stylesheet" type="text/css"/>
+<style>
+    body {
+        color: #111;
+        margin: 20px;
+        height: 100%;
+    }
+
+    #terminal-container {
+        margin: 0 auto;
+    }
+    #connect {
+        margin: 0 auto;
+    }
+    #terminal-container a {
+        color: #fff;
+    }
+    .panel-body{
+        background-color: #000;
+    }
+</style>
+</head>
+<body>
+      <form class="form-inline">
+            <div class="form-group">
+                <label for="">IP</label>
+                <input type="text" class="form-control" name="hostname" placeholder="196.168.1.120" value="196.168.1.120">
+            </div>
+            <div class="form-group">
+                <label for="">端口</label>
+                <input type="text" class="form-control" name="port" placeholder="22" value="22">
+            </div>
+            <div class="form-group">
+                <label for="">用户</label>
+                <input type="text" class="form-control" name="username" placeholder="root" value="root">
+            </div>
+            <div class="form-group">
+                <label for="">密码</label>
+                <input type="password" class="form-control" id="password" name="password" placeholder="123" value="123">
+            </div>
+            <button type="button" class="btn btn-default" onclick="ws_connect()" id="connect_container">连接</button>
+        </form>
+<div id="erorr"></div>
+<div class="panel panel-default">
+    <div class="panel-heading">控制台</div>
+    <div id="term" align="center"></div>
+</div>
+<script src="{{ static_url('js/jquery-3.4.1.min.js') }}"></script>
+ <script src="{{ static_url('js/bootstrap.min.js') }}"></script>
+<script src="{{ static_url('js/xterm.js') }}"></script>
+<script src="{{ static_url('js/main.js') }}"></script>
+</body>
+</html>
