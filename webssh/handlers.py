@@ -9,11 +9,9 @@ import paramiko
 from tornado.process import cpu_count
 import logging
 import socket
-import struct
 import traceback
 import json
 from concurrent.futures import ThreadPoolExecutor
-from worker import Worker
 import weakref
 from webssh.worker import Worker, recycle_worker, clients
 try:
