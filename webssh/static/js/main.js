@@ -6,7 +6,7 @@ var socket;
 var term = new Terminal({
     "cursorBlink":true,
     "rows":200,
-    "cols":300,
+    "cols":140,
 });
 
 

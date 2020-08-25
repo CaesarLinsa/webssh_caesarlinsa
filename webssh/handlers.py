@@ -4,7 +4,7 @@ import tornado.web
 import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
-from tornado.ioloop import  IOLoop
+from tornado.ioloop import IOLoop
 import paramiko
 from tornado.process import cpu_count
 import logging
@@ -13,7 +13,7 @@ import traceback
 import json
 from concurrent.futures import ThreadPoolExecutor
 import weakref
-from webssh.worker import Worker, recycle_worker, clients
+from worker import Worker, recycle_worker, clients
 try:
     from types import UnicodeType
 except ImportError:
