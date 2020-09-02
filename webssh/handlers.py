@@ -1,5 +1,4 @@
 # -*- encoding:utf-8 -*-
-
 import tornado.web
 import tornado.websocket
 import tornado.httpserver
@@ -14,6 +13,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 from worker import Worker, recycle_worker, clients
+
 try:
     from types import UnicodeType
 except ImportError:
@@ -23,13 +23,60 @@ try:
 except ImportError:
     JSONDecodeError = ValueError
 
+from tornado_sqlalchemy import SQLAlchemy
+from tornado_sqlalchemy import SessionMixin
+from model import SSHConnection
+
+db = SQLAlchemy("sqlite:///webssh.sqlite")
+
 
 class BaseHandler(tornado.web.RequestHandler):
     def get_current_user(self):
         return self.get_secure_cookie("username")
 
 
-class LoginHandler(BaseHandler):
+class RegisterConnectionHandler(SessionMixin, BaseHandler):
+
+    def get(self):
+        self.render("connection_register.html")
+
+    def post(self):
+        hostname = self.get_argument("hostname")
+        port = self.get_argument("port")
+        username = self.get_argument("username")
+        password = self.get_argument("password")
+        with self.make_session() as session:
+            session.add(SSHConnection(hostname=hostname, port=port, username=username, password=password))
+            session.commit()
+        self.redirect("/connection/list")
+
+
+class ConnectionListHandler(SessionMixin, BaseHandler):
+
+    def get(self):
+        return self.render("connection_list.html")
+
+
+class ConnectionDataHandler(SessionMixin, BaseHandler):
+
+    def get(self):
+        res = []
+        with self.make_session() as session:
+            connections = session.query(SSHConnection).all()
+            for connection in connections:
+                res.append({
+                    "id": connection.id,
+                    "hostname": connection.hostname,
+                    "port": connection.port,
+                    "username": connection.username,
+                    "connection": "<input type='submit' "
+                                  "class='btn btn-primary' onclick='ws_connect(this)' id=%s value='连接'>"
+                                  % str(connection.id)
+                })
+        self.write(json.dumps(res))
+
+
+class LoginHandler(SessionMixin, BaseHandler):
     executor = ThreadPoolExecutor(max_workers=cpu_count() * 5)
 
     def initialize(self, loop=None):
@@ -37,7 +84,16 @@ class LoginHandler(BaseHandler):
         self.result = dict(id=None, status=None)
 
     def get(self):
-        self.render('index.html')
+        id = self.get_argument("id")
+        res = {}
+        with self.make_session() as session:
+            connection = session.query(SSHConnection).filter_by(id=id).first()
+            if connection:
+                res["hostname"] = connection.hostname
+                res["port"] = connection.port
+                res["username"] = connection.username
+                res["password"] = connection.password
+        self.write(json.dumps(res))
 
     def get_args(self):
         hostname = self.get_argument("hostname")
@@ -163,13 +219,16 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 class Application(tornado.web.Application):
     def __init__(self, loop):
         handlers = [
-            (r'/', LoginHandler, dict(loop=loop)),
+            (r'/', RegisterConnectionHandler),
+            (r'/connection/data', ConnectionDataHandler),
+            (r'/connection/list', ConnectionListHandler),
+            (r'/login', LoginHandler, dict(loop=loop)),
             (r'/ws', WebSocketHandler, dict(loop=loop))
         ]
 
         settings = {"template_path": "templates", "static_path": "static",
                     "cookie_secret": "bZJc2sWbQLKos6GkHn/VB9oXwQt8S0R0kRvJ5/xJ89E="}
-        tornado.web.Application.__init__(self, handlers, **settings)
+        tornado.web.Application.__init__(self, handlers, db=db, **settings)
 
 
 if __name__ == '__main__':

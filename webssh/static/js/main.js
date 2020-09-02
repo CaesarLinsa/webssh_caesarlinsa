@@ -10,22 +10,18 @@ var term = new Terminal({
 });
 
 
-function ws_connect(){
-    hostname=$("input[name=hostname]").val();
-    port=$("input[name=port]").val();
-    username=$("input[name=username]").val();
-    password=$("#password").val();
-    $.post(url = "./",
+function ws_connect(e){
+    $.get(url = "/login",
         data = {
-            "hostname": hostname,
-            "port": port,
-            "username": username,
-            "password": password
+            "id": e.getAttribute('id')
         },
-        function(msg){
+        function (msg) {
+            console.log(msg);
+        });
+}
+
+function success_execute(msg){
         if(msg.id){
-            $("#connect_container").hide();
-            $("#drop_container").show();
             container = document.getElementById('term');
             url = 'ws://'+ webhost +':'+ webport +'/ws?id=' + msg.id;
             socket = new WebSocket(url);
@@ -56,12 +52,9 @@ function ws_connect(){
                 term.write("session is close");
                 window.location.reload()
             }
-
         }else{
             alert("connection failed"+ msg.result);
         }
-    })
-
 }
 
 function ws_close() {
