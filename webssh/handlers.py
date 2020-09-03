@@ -13,7 +13,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 from worker import Worker, recycle_worker, clients
-
+import struct
 try:
     from types import UnicodeType
 except ImportError:
@@ -55,6 +55,12 @@ class ConnectionListHandler(SessionMixin, BaseHandler):
 
     def get(self):
         return self.render("connection_list.html")
+
+
+class ConnectionShowHandler(SessionMixin, BaseHandler):
+
+    def get(self, worker_id):
+        return self.render("index.html", worker_id=worker_id)
 
 
 class ConnectionDataHandler(SessionMixin, BaseHandler):
@@ -154,7 +160,7 @@ class LoginHandler(SessionMixin, BaseHandler):
             workers[worker.id] = worker
             self.loop.call_later(3, recycle_worker,
                                  worker)
-            self.result.update(id=worker.id)
+            self.result.update(id=worker.id, hostname=args[0])
 
         self.write(self.result)
 
@@ -200,6 +206,13 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         if not isinstance(msg, dict):
             return
 
+        resize = msg.get('resize')
+        if resize and len(resize) == 2:
+            try:
+                worker.chan.resize_pty(*resize)
+            except (TypeError, struct.error, paramiko.SSHException):
+                pass
+
         data = msg.get('data')
         # 控制台输入字符，写入channel
         if data and isinstance(data, UnicodeType):
@@ -219,9 +232,11 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 class Application(tornado.web.Application):
     def __init__(self, loop):
         handlers = [
+
             (r'/', RegisterConnectionHandler),
             (r'/connection/data', ConnectionDataHandler),
             (r'/connection/list', ConnectionListHandler),
+            (r'/connection/\d+\.\d+\.\d+\.\d+/(\d+)', ConnectionShowHandler),
             (r'/login', LoginHandler, dict(loop=loop)),
             (r'/ws', WebSocketHandler, dict(loop=loop))
         ]

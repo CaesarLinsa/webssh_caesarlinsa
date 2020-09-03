@@ -4,43 +4,122 @@
     <meta charset="UTF-8">
     <title>webssh</title>
     <link href="{{ static_url('css/bootstrap.min.css') }}" rel="stylesheet" type="text/css"/>
-    <link href="{{ static_url('css/xterm.css') }}" rel="stylesheet" type="text/css"/>
-<style>
-    body {
-        color: #111;
-        margin: 20px;
-    }
-</style>
+    <link href="{{ static_url('css/bootstrap-table.css') }}" rel="stylesheet" type="text/css"/>
+    <link href="{{ static_url('css/xterm.min.css') }}" rel="stylesheet" type="text/css"/>
+    <link href="{{ static_url('css/fullscreen.css') }}" rel="stylesheet" type="text/css"/>
 </head>
 <body>
-      <form class="form-inline">
-            <div class="form-group">
-                <label for="">IP</label>
-                <input type="text" class="form-control" name="hostname" placeholder="196.168.1.120" value="196.168.1.120">
-            </div>
-            <div class="form-group">
-                <label for="">端口</label>
-                <input type="text" class="form-control" name="port" placeholder="22" value="22">
-            </div>
-            <div class="form-group">
-                <label for="">用户</label>
-                <input type="text" class="form-control" name="username" placeholder="root" value="root">
-            </div>
-            <div class="form-group">
-                <label for="">密码</label>
-                <input type="password" class="form-control" id="password" name="password" placeholder="123" value="123">
-            </div>
-            <button type="button" class="btn btn-default" onclick="ws_connect()" id="connect_container">连接</button>
-            <button type="button" class="btn btn-default" onclick="ws_close()" id="drop_container" style="display:none">断开</button>
-      </form>
-<div id="erorr"></div>
-<div class="panel panel-default" style="display: none">
-    <div class="panel-heading">控制台</div>
-    <div id="term" align="center"></div>
-</div>
-<script src="{{ static_url('js/jquery-3.4.1.min.js') }}"></script>
- <script src="{{ static_url('js/bootstrap.min.js') }}"></script>
+<div id="terminal"> </div>
+<script src="{{ static_url('js/jquery.min.js') }}"></script>
+<script src="{{ static_url('js/bootstrap.bundle.js') }}"></script>
+<script src="{{ static_url('js/bootstrap-table.js') }}"></script>
 <script src="{{ static_url('js/xterm.min.js') }}"></script>
-<script src="{{ static_url('js/main.js') }}"></script>
+<script src="{{ static_url('js/xterm-addon-fit.min.js') }}"></script>
+<script>
+//获取主机 端口
+webhost=location.hostname;
+webport=location.port;
+
+var socket;
+    style = {};
+var term;
+
+function toggle_fullscreen(term) {
+    $('#terminal .terminal').toggleClass('fullscreen');
+    term.fitAddon.fit();
+}
+
+function parse_xterm_style() {
+    var text = $('.xterm-helpers style').text();
+    var arr = text.split('xterm-normal-char{width:');
+    style.width = parseFloat(arr[1]);
+    arr = text.split('div{height:');
+    style.height = parseFloat(arr[1]);
+}
+
+
+function get_cell_size(term) {
+    style.width = term._core._renderService._renderer.dimensions.actualCellWidth;
+    style.height = term._core._renderService._renderer.dimensions.actualCellHeight;
+}
+
+function current_geometry(term) {
+    if (!style.width || !style.height) {
+      try {
+        get_cell_size(term);
+      } catch (TypeError) {
+        parse_xterm_style();
+      }
+    }
+
+    var cols = parseInt(window.innerWidth / style.width, 10) - 1;
+    var rows = parseInt(window.innerHeight / style.height, 10);
+    return {'cols': cols, 'rows': rows};
+}
+
+
+function resize_terminal(term) {
+    var geometry = current_geometry(term);
+    term.on_resize(geometry.cols, geometry.rows);
+}
+
+var terminal = document.getElementById('terminal');
+term = new window.Terminal({
+    cursorBlink: true,
+    theme: {
+    background: 'black'
+    }
+});
+term.fitAddon = new window.FitAddon.FitAddon();
+term.loadAddon(term.fitAddon);
+
+url = 'ws://'+ webhost +':'+ webport +'/ws?id=' + {{ worker_id }};
+socket = new WebSocket(url);
+term.onData(function(data) {
+    //控制台输入字符
+    console.log(data);
+    socket.send(JSON.stringify({'data':data}));
+});
+
+term.on_resize = function(cols, rows){
+  if (cols !== this.cols || rows !== this.rows) {
+    this.resize(cols, rows);
+    socket.send(JSON.stringify({'resize': [cols, rows]}));
+  }
+}
+
+socket.onopen = function(){
+    term.open(terminal, true);
+    toggle_fullscreen(term);
+    term.focus();
+};
+
+socket.onmessage = function (event) {
+    decoder = new window.TextDecoder('utf-8');
+    var reader = new FileReader();
+    reader.onload = function(){
+      term.write(decoder.decode(reader.result));
+      if(!term.resized){
+          resize_terminal(term);
+          term.resized = true;
+      }
+    };
+    reader.readAsArrayBuffer(event.data);
+};
+
+socket.onclose = function (e) {
+    term.write("session closed and close the window");
+    term.dispose();
+    term = undefined;
+    socket = undefined;
+    window.close()
+}
+
+$(window).resize(function(){
+    if (term) {
+    resize_terminal(term);
+    }
+});
+</script>
 </body>
 </html>
