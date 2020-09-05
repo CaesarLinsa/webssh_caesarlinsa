@@ -22,6 +22,33 @@
     <table id="tableId"></table>
     </div>
 {% end %}
+<!-- 模态框（Modal） -->
+<div class="modal fade" id="myModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="myModalLabel">
+                    选择需要上传的文件
+                </h4>
+            </div>
+            <div class="modal-body">
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="form-group">
+                    <input id='file' class="btn btn-info" name="upload_file" type="file">
+                    </div>
+                    <div class="form-group">
+                        <input id='filepath'  name='filepath'  class="form-control  input-sm" placeholder="上传路径，不填写，默认用户目录下">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id='upload' class="btn btn-primary ">上传</button>
+                <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+        <div class="hidden" type="display:none"></div>
+    </div>
+</div>
 <script src="{{ static_url('js/jquery.min.js') }}"></script>
 <script src="{{ static_url('js/bootstrap.bundle.js') }}"></script>
 <script src="{{ static_url('js/bootstrap-table.js') }}"></script>
@@ -63,13 +90,21 @@
                 title: '端口'
                 },
                 {
+                    field: 'username',
+                    title: '登录用户'
+                },
+                {
                 field: 'connection',
                 title: '连接'
+                },
+                {
+                 field: 'sftp',
+                 title: '上传'
                 }
 
             ]
         });
-        // (暂时未实现)删除选中行
+        // 删除选中行
         $("#btn_delete").click(function() {
             var line_arr = $('#tableId').bootstrapTable('getSelections');
             if (line_arr.length <= 0) {
@@ -80,10 +115,13 @@
                 var index = [];
                 for(var i=0; i<line_arr.length;i++){
                     var connection_id = line_arr[i].id;
-                    index[i] = connection_id;
+                    var start = connection_id.indexOf(">") + 1;
+                    var end = connection_id.lastIndexOf("<");
+                    var id = connection_id.substring(start, end);
+                    index[i] = id;
                     $.ajax({
                         type: "DELETE",
-                        url: "/connection/delete/" + connection_id,
+                        url: "/connection/delete/" + id,
                         fail:function(msg){
                             alert("删除失败")
                         }

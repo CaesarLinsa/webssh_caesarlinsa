@@ -1,5 +1,6 @@
 # -*- encoding:utf-8 -*-
 import tornado.web
+from tornado.web import stream_request_body
 import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
@@ -10,10 +11,12 @@ import logging
 import socket
 import traceback
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 from worker import Worker, recycle_worker, clients
 import struct
+
 try:
     from types import UnicodeType
 except ImportError:
@@ -26,8 +29,15 @@ except ImportError:
 from tornado_sqlalchemy import SQLAlchemy
 from tornado_sqlalchemy import SessionMixin
 from model import SSHConnection
+from tornadostreamform.multipart_streamer import MultiPartStreamer, TemporaryFileStreamedPart
+
+TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp_dir")
 
 db = SQLAlchemy("sqlite:///webssh.sqlite")
+
+MB = 1024 * 1024
+GB = 1024 * MB
+MAX_STREAM_SIZE = 5 * GB
 
 
 class BaseHandler(tornado.web.RequestHandler):
@@ -38,17 +48,29 @@ class BaseHandler(tornado.web.RequestHandler):
 class RegisterConnectionHandler(SessionMixin, BaseHandler):
 
     def get(self):
-        self.render("connection_register.html")
+        self.render("connection_register.html", edit=False)
 
     def post(self):
+        id = self.get_argument("id")
         hostname = self.get_argument("hostname")
         port = self.get_argument("port")
         username = self.get_argument("username")
         password = self.get_argument("password")
-        with self.make_session() as session:
-            session.add(SSHConnection(hostname=hostname, port=port, username=username, password=password))
-            session.commit()
-        self.redirect("/connection/list")
+        # 添加ssh连接记录
+        if not id:
+            with self.make_session() as session:
+                session.add(SSHConnection(hostname=hostname, port=port, username=username, password=password))
+                session.commit()
+        else:
+            with self.make_session() as session:
+                session.query(SSHConnection).filter_by(id=id).update({"hostname": hostname,
+                                                                      "port": port,
+                                                                      "username": username,
+                                                                      "password": password})
+
+                session.commit()
+            # 更新ssh连接记录
+            self.redirect("/connection/list")
 
 
 class ConnectionListHandler(SessionMixin, BaseHandler):
@@ -63,6 +85,21 @@ class ConnectionShowHandler(SessionMixin, BaseHandler):
         return self.render("index.html", worker_id=worker_id)
 
 
+class ConnectionEditHandler(SessionMixin, BaseHandler):
+
+    def get(self, connection_id):
+        res = {}
+        with self.make_session() as session:
+            connection = session.query(SSHConnection).filter_by(id=connection_id).first()
+            if connection:
+                res["id"] = connection.id
+                res["hostname"] = connection.hostname
+                res["port"] = connection.port
+                res["username"] = connection.username
+                res["password"] = connection.password
+        return self.render("connection_register.html", edit=True, **res)
+
+
 class ConnectionDataHandler(SessionMixin, BaseHandler):
 
     def get(self):
@@ -71,15 +108,93 @@ class ConnectionDataHandler(SessionMixin, BaseHandler):
             connections = session.query(SSHConnection).all()
             for connection in connections:
                 res.append({
-                    "id": connection.id,
+                    "id": "<a href='%s'>%s</a>" % (connection.id, connection.id),
                     "hostname": connection.hostname,
                     "port": connection.port,
                     "username": connection.username,
                     "connection": "<input type='submit' "
                                   "class='btn btn-primary' onclick='ws_connect(this)' id=%s value='连接'>"
-                                  % str(connection.id)
+                                  % str(connection.id),
+                    "sftp": "<submit class='btn btn-primary' data-toggle='modal'"
+                            "data-target='#myModal' id=%s>文件上传</submit>" % str(connection.id)
                 })
         self.write(json.dumps(res))
+
+
+class UploadStreamer(MultiPartStreamer):
+    def create_part(self, headers):
+        return TemporaryFileStreamedPart(self, headers, tmp_dir=TMP_DIR)
+
+
+@stream_request_body
+class ConnectionUploadHandler(SessionMixin, BaseHandler):
+    def prepare(self):
+        self.rm_file()
+        if self.request.method.lower() == "post":
+            self.request.connection.set_max_body_size(MAX_STREAM_SIZE)
+        try:
+            total = int(self.request.headers.get("Content-Length", "0"))
+        except KeyError:
+            total = 0
+        self.ps = UploadStreamer(total)
+
+    def data_received(self, chunk):
+        self.ps.data_received(chunk)
+
+    def post(self):
+        try:
+            self.ps.data_complete()
+            id = filedir = filepath = None
+            # 三个part， 第一个文件，第二个filepath， 第三个id
+            for part in self.ps.parts:
+                if part.get_filename():
+                    filepath = os.path.join(TMP_DIR, part.get_filename())
+                    part.move(filepath)
+                if part.get_name() == "id":
+                    id = int(part.get_payload())
+                if part.get_name() == "filepath":
+                    filedir = part.get_payload()
+            self.ps.release_parts()
+            if filepath or filedir:
+                if id:
+                    with self.make_session() as session:
+                        connection = session.query(SSHConnection).filter_by(id=id).first()
+                        self.ftp_upload(connection, filepath, filedir)
+                    self.rm_file()
+                else:
+                    self.write({"status": 500, "result": "id is None"})
+            else:
+                self.write({"status": 500, "result": "file path is None"})
+        except Exception as e:
+            self.write({"status": 500, "result": str(e)})
+            raise e
+            return
+        self.write({"status": 200, "result": ""})
+
+    def ftp_upload(self, connection, cur_file, filepath):
+        ftp_transport = paramiko.Transport(connection.hostname, connection.port)
+        ftp_transport.connect(username=connection.username, password=connection.password)
+        sftp_client = paramiko.SFTPClient.from_transport(ftp_transport)
+        filename = os.path.basename(cur_file)
+        if connection.username != "root":
+            target_file = "%s/%s" % (filepath, filename) if filepath else "/home/%s/%s" % (connection.username, filename)
+        else:
+            target_file = "/root/%s" % filename
+        sftp_client.put(cur_file, target_file)
+
+    def rm_file(self):
+        files = os.listdir(TMP_DIR)
+        for file in files:
+            os.remove(os.path.join(TMP_DIR, file))
+
+
+class ConnectionDeleteHandler(SessionMixin, BaseHandler):
+
+    def delete(self, worker_id):
+        with self.make_session() as session:
+            connection = session.query(SSHConnection).filter_by(id=worker_id).first()
+            session.delete(connection)
+            session.commit()
 
 
 class LoginHandler(SessionMixin, BaseHandler):
@@ -234,7 +349,10 @@ class Application(tornado.web.Application):
         handlers = [
 
             (r'/', RegisterConnectionHandler),
+            (r'/connection/(\d+)', ConnectionEditHandler),
             (r'/connection/data', ConnectionDataHandler),
+            (r'/upload', ConnectionUploadHandler),
+            (r'/connection/delete/(\d+)', ConnectionDeleteHandler),
             (r'/connection/list', ConnectionListHandler),
             (r'/connection/\d+\.\d+\.\d+\.\d+/(\d+)', ConnectionShowHandler),
             (r'/login', LoginHandler, dict(loop=loop)),
