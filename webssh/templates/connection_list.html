@@ -39,6 +39,13 @@
                     <div class="form-group">
                         <input id='filepath'  name='filepath'  class="form-control  input-sm" placeholder="上传路径，不填写，默认用户目录下">
                     </div>
+                    <div id="progress" class="progress">
+                        <div id="progress_rate" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"
+                            class="progress-bar progress-bar-success progress-bar-striped active"
+                            role="progressbar" style="width: 0%">
+                                <span id="percent">0%</span>
+                        </div>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">

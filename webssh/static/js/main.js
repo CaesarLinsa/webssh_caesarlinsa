@@ -27,13 +27,44 @@ function success_execute(msg){
         }
 }
 
- $('#myModal').on('show.bs.modal',function(event) {
+var model = $('#myModal');
+
+//模态框打开时，触发将id放置在form中，连接id
+model.on('show.bs.modal',function(event) {
      var id = $(event.relatedTarget).attr('id');
      $(".hidden").attr({"id":id});
 
  });
 
-$('#upload').click(function() {
+//模态框关闭时，清除文件数据及进度
+model.on('hide.bs.modal',function(event) {
+    $("#upload-form")[0].reset();
+    $("#progress_rate").css("width", "0%");
+    $("#percent").text("0%");
+
+ });
+
+$('#upload').click(function(event) {
+    //阻止默认事件
+    event.preventDefault();
+    var pro = window.setInterval(function (){
+    $.ajax({
+        type: "POST",
+        url: "/upload/progress",
+        data: {"filename": $("#file").val().split("\\").pop() },
+        data_type: "json",
+        success: function(data) {
+            var rate = data.progress * 100;
+            rate = rate.toFixed(2);
+            $("#progress_rate").css("width", rate + "%");
+            $("#percent").text(rate + "%");
+            if (rate >= 100) {
+                window.clearInterval(pro);
+                $("#percent").text("文件上传成功！");
+            }
+        }
+    });
+    }, 1000);
     var formData = new FormData($('#upload-form')[0]);
     var id = $(".hidden").attr("id");
     formData.append("id", id);
@@ -46,9 +77,9 @@ $('#upload').click(function() {
         cache: false,
         contentType: false,
         success: function(data) {
-            $("#myModal").modal('hide');
             if(data.status == 200){
                console.log(data);
+               // $("#myModal").modal('hide');
             }else{
                 alert("上传失败！" + data.result);
             }

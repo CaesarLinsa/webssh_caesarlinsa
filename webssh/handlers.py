@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import weakref
 from worker import Worker, recycle_worker, clients
 import struct
-
+import uuid
 try:
     from types import UnicodeType
 except ImportError:
@@ -25,11 +25,11 @@ try:
     from json.decoder import JSONDecodeError
 except ImportError:
     JSONDecodeError = ValueError
-
+from tornado.concurrent import run_on_executor
 from tornado_sqlalchemy import SQLAlchemy
 from tornado_sqlalchemy import SessionMixin
-from model import SSHConnection
-from tornadostreamform.multipart_streamer import MultiPartStreamer, TemporaryFileStreamedPart
+from model import SSHConnection, UploadProgress
+from tornadostreamform.multipart_streamer import MultiPartStreamer
 
 TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp_dir")
 
@@ -121,26 +121,53 @@ class ConnectionDataHandler(SessionMixin, BaseHandler):
         self.write(json.dumps(res))
 
 
-class UploadStreamer(MultiPartStreamer):
-    def create_part(self, headers):
-        return TemporaryFileStreamedPart(self, headers, tmp_dir=TMP_DIR)
-
-
 @stream_request_body
 class ConnectionUploadHandler(SessionMixin, BaseHandler):
+    executor = ThreadPoolExecutor(max_workers=cpu_count() * 5)
+
+    def update_upload_progress(self, filename, value, task_id, rel_filename=None, total=None, create=True):
+        up = UploadProgress(filename=filename, cur_value=value, total=total, rel_filename=rel_filename, task_id=task_id)
+        with self.make_session() as session:
+            if create:
+                session.add(up)
+            else:
+                data = {"cur_value": value, "task_id": task_id }
+                if total:
+                    data.update({"total": total})
+                if rel_filename:
+                    data.update({"rel_filename": rel_filename})
+                session.query(UploadProgress).update(data)
+            session.commit()
+
+    def initialize(self):
+        self.chunk_bytes = 0
+
     def prepare(self):
-        self.rm_file()
         if self.request.method.lower() == "post":
             self.request.connection.set_max_body_size(MAX_STREAM_SIZE)
         try:
             total = int(self.request.headers.get("Content-Length", "0"))
         except KeyError:
             total = 0
-        self.ps = UploadStreamer(total)
+        # 每次请求创建临时目录，上传完成后，清除目录
+        # 保证并行上传，或其他请求
+        uuid_str = str(uuid.uuid4())
+        tmp_dir = os.path.join(TMP_DIR, uuid_str)
+        if not os.path.exists(tmp_dir):
+            os.mkdir(tmp_dir)
+        self.ps = MultiPartStreamer(total, tmp_dir=tmp_dir)
+        self.update_upload_progress(filename=uuid_str, value=0, total=total, task_id=1)
 
+    @run_on_executor
     def data_received(self, chunk):
+        self.chunk_bytes += len(chunk)
         self.ps.data_received(chunk)
+        if self.ps.get_parts_by_name("upload_file"):
+            rel_filename = self.ps.get_parts_by_name("upload_file")[0].get_filename()
+        self.update_upload_progress(filename=os.path.basename(self.ps.tmp_dir),
+                                    value=self.chunk_bytes, task_id=1, rel_filename=rel_filename, create=False)
 
+    @tornado.gen.coroutine
     def post(self):
         try:
             self.ps.data_complete()
@@ -148,7 +175,8 @@ class ConnectionUploadHandler(SessionMixin, BaseHandler):
             # 三个part， 第一个文件，第二个filepath， 第三个id
             for part in self.ps.parts:
                 if part.get_filename():
-                    filepath = os.path.join(TMP_DIR, part.get_filename())
+                    filepath = os.path.join(os.path.dirname(part.f_out.name),
+                                            part.get_filename())
                     part.move(filepath)
                 if part.get_name() == "id":
                     id = int(part.get_payload())
@@ -159,8 +187,8 @@ class ConnectionUploadHandler(SessionMixin, BaseHandler):
                 if id:
                     with self.make_session() as session:
                         connection = session.query(SSHConnection).filter_by(id=id).first()
-                        self.ftp_upload(connection, filepath, filedir)
-                    self.rm_file()
+                        futrue = self.executor.submit(self.ftp_upload, connection, filepath, filedir)
+                        yield futrue
                 else:
                     self.write({"status": 500, "result": "id is None"})
             else:
@@ -171,21 +199,48 @@ class ConnectionUploadHandler(SessionMixin, BaseHandler):
             return
         self.write({"status": 200, "result": ""})
 
-    def ftp_upload(self, connection, cur_file, filepath):
+    def ftp_upload(self, connection, filepath, filedir):
+
+        def callback(cur, total):
+            uuid_str = os.path.basename(os.path.dirname(filepath))
+            self.update_upload_progress(filename=uuid_str, value=cur, total=total, task_id=2, create=False)
+
         ftp_transport = paramiko.Transport(connection.hostname, connection.port)
         ftp_transport.connect(username=connection.username, password=connection.password)
         sftp_client = paramiko.SFTPClient.from_transport(ftp_transport)
-        filename = os.path.basename(cur_file)
+        filename = os.path.basename(filepath)
         if connection.username != "root":
-            target_file = "%s/%s" % (filepath, filename) if filepath else "/home/%s/%s" % (connection.username, filename)
+            target_file = "%s/%s" % (bytes.decode(filedir), filename) if filedir else "/home/%s/%s" % (connection.username, filename)
         else:
-            target_file = "/root/%s" % filename
-        sftp_client.put(cur_file, target_file)
+            target_file = "%s/%s" % (bytes.decode(filedir), filename) if filedir else "/root/%s" % filename
+        sftp_client.put(filepath, target_file, callback=callback)
+        self.rm_file(filepath)
 
-    def rm_file(self):
-        files = os.listdir(TMP_DIR)
+    def rm_file(self, filepath):
+        work_dir = os.path.dirname(filepath)
+        files = os.listdir(work_dir)
         for file in files:
-            os.remove(os.path.join(TMP_DIR, file))
+            os.remove(os.path.join(work_dir, file))
+        os.rmdir(work_dir)
+
+
+class UploadProgressHandler(SessionMixin, BaseHandler):
+
+    def post(self):
+        res = {}
+        rel_filename = self.get_argument("filename")
+        with self.make_session() as session:
+            up = session.query(UploadProgress).filter_by(rel_filename=rel_filename).first()
+            if up:
+                if up.task_id == 1:
+                    res['progress'] = float(up.cur_value/up.total) * 0.5
+                elif up.task_id == 2:
+                    res['progress'] = 0.5 + float(up.cur_value / up.total) * 0.5
+            else:
+                res['progress'] = 0
+            if res.get("progress") >= 1:
+                session.delete(up)
+        self.write(res)
 
 
 class ConnectionDeleteHandler(SessionMixin, BaseHandler):
@@ -352,6 +407,7 @@ class Application(tornado.web.Application):
             (r'/connection/(\d+)', ConnectionEditHandler),
             (r'/connection/data', ConnectionDataHandler),
             (r'/upload', ConnectionUploadHandler),
+            (r'/upload/progress', UploadProgressHandler),
             (r'/connection/delete/(\d+)', ConnectionDeleteHandler),
             (r'/connection/list', ConnectionListHandler),
             (r'/connection/\d+\.\d+\.\d+\.\d+/(\d+)', ConnectionShowHandler),
