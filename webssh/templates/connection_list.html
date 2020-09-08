@@ -89,6 +89,10 @@
                 title: '编号'
                 },
                 {
+                 field: 'alias_name',
+                 title: '别名'
+                },
+                {
                 field: 'hostname',
                 title: '主机'
                 },
@@ -125,7 +129,7 @@
                     var start = connection_id.indexOf(">") + 1;
                     var end = connection_id.lastIndexOf("<");
                     var id = connection_id.substring(start, end);
-                    index[i] = id;
+                    index[i] = connection_id;
                     $.ajax({
                         type: "DELETE",
                         url: "/connection/delete/" + id,

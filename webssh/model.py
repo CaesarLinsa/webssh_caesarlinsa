@@ -9,6 +9,7 @@ class SSHConnection(db.Model):
     id = Column(INTEGER,
                 primary_key=True,
                 autoincrement=True)
+    alias_name = Column(String(length=100))
     hostname = Column(String(length=50))
     port = Column(SMALLINT)
     username = Column(String(50))

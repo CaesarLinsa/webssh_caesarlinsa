@@ -52,6 +52,7 @@ class RegisterConnectionHandler(SessionMixin, BaseHandler):
 
     def post(self):
         id = self.get_argument("id")
+        alias_name = self.get_argument("alias_name")
         hostname = self.get_argument("hostname")
         port = self.get_argument("port")
         username = self.get_argument("username")
@@ -59,18 +60,20 @@ class RegisterConnectionHandler(SessionMixin, BaseHandler):
         # 添加ssh连接记录
         if not id:
             with self.make_session() as session:
-                session.add(SSHConnection(hostname=hostname, port=port, username=username, password=password))
+                session.add(SSHConnection(alias_name=alias_name, hostname=hostname, port=port, username=username, password=password))
                 session.commit()
         else:
             with self.make_session() as session:
-                session.query(SSHConnection).filter_by(id=id).update({"hostname": hostname,
-                                                                      "port": port,
-                                                                      "username": username,
-                                                                      "password": password})
+                session.query(SSHConnection).filter_by(id=id).update({
+                    "alias_name": alias_name,
+                    "hostname": hostname,
+                    "port": port,
+                    "username": username,
+                    "password": password})
 
                 session.commit()
-            # 更新ssh连接记录
-            self.redirect("/connection/list")
+        # 更新ssh连接记录
+        self.redirect("/connection/list")
 
 
 class ConnectionListHandler(SessionMixin, BaseHandler):
@@ -93,6 +96,7 @@ class ConnectionEditHandler(SessionMixin, BaseHandler):
             connection = session.query(SSHConnection).filter_by(id=connection_id).first()
             if connection:
                 res["id"] = connection.id
+                res["alias_name"] = connection.alias_name
                 res["hostname"] = connection.hostname
                 res["port"] = connection.port
                 res["username"] = connection.username
@@ -109,6 +113,7 @@ class ConnectionDataHandler(SessionMixin, BaseHandler):
             for connection in connections:
                 res.append({
                     "id": "<a href='%s'>%s</a>" % (connection.id, connection.id),
+                    "alias_name": connection.alias_name,
                     "hostname": connection.hostname,
                     "port": connection.port,
                     "username": connection.username,
