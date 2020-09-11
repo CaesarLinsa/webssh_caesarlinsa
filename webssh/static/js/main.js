@@ -13,18 +13,28 @@ function ws_connect(e){
                     "password": dat["password"]
                 },
                 dataType: "json",
-                success: success_execute
+                complete: connect_callback
             })
         });
 }
 
-function success_execute(msg){
-        if(msg.id) {
-            var url = window.location.href;
-            var index = url.lastIndexOf("\/")
-            var switch_url = url.substring(0,index+1) + msg.hostname + "/" + msg.id;
-            window.open(switch_url);
+function connect_callback(resp){
+
+        if(resp.status !== 200){
+            alert(resp.status + ":" + resp.statusText);
+            return;
         }
+        var msg = resp.responseJSON;
+        if(!msg.id){
+            alert(msg.status);
+        }
+        if(msg.id)
+            if(msg.id) {
+                var url = window.location.href;
+                var index = url.lastIndexOf("\/")
+                var switch_url = url.substring(0,index+1) + msg.hostname + "/" + msg.id;
+                window.open(switch_url);
+            }
 }
 
 var model = $('#myModal');
@@ -59,8 +69,8 @@ $('#upload').click(function(event) {
             $("#progress_rate").css("width", rate + "%");
             $("#percent").text(rate + "%");
             if (rate >= 100) {
-                window.clearInterval(pro);
                 $("#percent").text("文件上传成功！");
+                window.clearInterval(pro);
             }
         }
     });
@@ -85,7 +95,7 @@ $('#upload').click(function(event) {
             }
         },
         error: function(data) {
-            alert("上传失败！" + data);
+            alert("上传失败！请确保上传文件小于5G");
         }
     })
 });

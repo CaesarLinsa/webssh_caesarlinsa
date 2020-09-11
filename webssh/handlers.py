@@ -141,7 +141,7 @@ class ConnectionUploadHandler(SessionMixin, BaseHandler):
                     data.update({"total": total})
                 if rel_filename:
                     data.update({"rel_filename": rel_filename})
-                session.query(UploadProgress).update(data)
+                session.query(UploadProgress).filter_by(filename=filename).update(data)
             session.commit()
 
     def initialize(self):
@@ -201,7 +201,6 @@ class ConnectionUploadHandler(SessionMixin, BaseHandler):
         except Exception as e:
             self.write({"status": 500, "result": str(e)})
             raise e
-            return
         self.write({"status": 200, "result": ""})
 
     def ftp_upload(self, connection, filepath, filedir):
@@ -297,7 +296,7 @@ class LoginHandler(SessionMixin, BaseHandler):
         logging.info('Connecting to {}:{}'.format(*dst_addr))
 
         try:
-            ssh.connect(*args, timeout=30)
+            ssh.connect(*args, timeout=10)
         except socket.error:
             raise ValueError('Unable to connect to {}:{}'.format(*dst_addr))
         except paramiko.BadAuthenticationType:
